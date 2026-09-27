@@ -61,6 +61,18 @@ ollama pull qwen3.5:4b
 python3 -m serverhelpr
 \`\`
 
+## Knowledge base
+
+When ServerHelpr cannot confidently understand a request, it can ask the local AI to suggest what the user may have meant.
+
+The clarification flow is:
+
+- **Y** = use the suggested interpretation.
+- **A** = use it and add the interpretation to the local knowledge base.
+- **N** = reject it and rephrase the request.
+
+Learned mappings are stored locally in data/knowledge.json. They are not sent to an external service. Future matching phrases can reuse the saved interpretation, while command execution still passes through the normal policy/approval checks.
+
 ## Approval model
 
 When the model requests a command that is not approved, ServerHelpr displays the exact server and command.
