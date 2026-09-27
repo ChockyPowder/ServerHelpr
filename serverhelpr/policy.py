@@ -15,7 +15,20 @@ class Policy:
         self.base_allowed = set(
             config.get("policy", {}).get("allowed_commands", [])
         )
-        self.high_risk = config.get("policy", {}).get("high_risk_patterns", [])
+        configured = config.get("policy", {}).get("high_risk_patterns", [])
+        built_in = [
+            "ssh-keygen",
+            "authorized_keys",
+            "sshd_config",
+            "useradd",
+            "usermod",
+            "userdel",
+            "passwd ",
+            "visudo",
+            "/etc/sudoers",
+            "/etc/sudoers.d/",
+        ]
+        self.high_risk = list(dict.fromkeys(configured + built_in))
 
     def _load(self) -> dict:
         if not self.path.exists():
