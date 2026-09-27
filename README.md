@@ -1,86 +1,119 @@
 # ServerHelpr
 
-A local-first AI server operations assistant for Debian/Linux servers.
+A local-first AI infrastructure agent for Debian/Linux servers.
 
-## Goals
+## What it is
 
-- Run a local LLM through Ollama.
-- Manage multiple Linux servers over SSH.
-- Start in read-only mode.
-- Ask for approval before executing unknown commands.
-- Allow commands to be approved once or permanently.
-- Keep the server inventory and policy locally.
-- Never give the model direct shell access; the agent mediates every operation.
+ServerHelpr is an AI agent, not a phrase-to-command chatbot. The local model is the reasoning brain. It can understand natural-language requests, investigate systems, use specialized capabilities, perform multi-step work, verify changes, and remember useful infrastructure knowledge.
 
-## Architecture
+## Agent loop
 
-\`\`\`
-You -> ServerHelpr -> Ollama
-                  -> SSH -> Debian servers
-                  -> policy/approval engine
-\`\`\`
+```
+understand
+   |
+   v
+recall memory
+   |
+   v
+investigate
+   |
+   v
+choose tool
+   |
+   v
+execute
+   |
+   v
+inspect result
+   |
+   +----> more work ----+
+   |                    |
+   v                    |
+verify <----------------+
+   |
+   v
+remember useful knowledge
+   |
+   v
+answer
+```
 
-## Current status
+A single user request can therefore require many tool steps.
 
-This repository contains the initial MVP. It is deliberately conservative: SSH commands require an approval decision unless they are already in the configured allowlist.
+## Persistent memory
+
+Memory is stored locally in `data/knowledge.json`.
+
+It stores structured knowledge rather than exact user phrases:
+
+- `server_fact` — facts about a server, service, application, paths, configuration, etc.
+- `procedure` — reusable ways of accomplishing a task
+- `preference` — user or infrastructure preferences
+- `lesson` — corrections and useful experience
+
+Memory is supplied to the model when relevant and can also be searched explicitly with the memory tools.
+
+Memory is evidence, not absolute truth. Volatile facts should be checked again.
+
+Passwords, private keys, API keys, tokens and other obvious secrets are rejected by the memory tool.
+
+## Tools
+
+The model can currently use:
+
+- server information
+- network information
+- process inspection
+- systemd service status/start/stop/restart
+- Debian package status/install/update/upgrade
+- disk usage
+- memory usage
+- directory listing
+- file reading/writing
+- file searching
+- arbitrary shell commands
+- persistent memory recall/storage
+
+The tool layer is intentionally extensible.
+
+## Multi-step example
+
+For:
+
+`change the current nginx website to a blue background and restart nginx`
+
+the agent should investigate the nginx configuration and website files, determine the active content, inspect the relevant HTML/CSS, make the requested change, validate it, restart nginx if appropriate, verify nginx, verify the resulting website files, and remember useful discoveries.
+
+It is not limited to one command per request.
+
+## Safety
+
+- Only configured servers are accessible.
+- The model never receives SSH private keys.
+- Every server command passes through the policy/approval layer.
+- Restricted servers require approval for commands not already allowed.
+- High-risk command patterns require interactive approval and cannot be permanently remembered.
+- A server configured with `unrestricted: true` is treated as a disposable test sandbox and bypasses approval.
+- Failed commands are returned as evidence; the agent is instructed not to invent causes or perform unrelated cleanup.
 
 ## Requirements
 
 - Python 3.11+
 - Ollama
 - A local model with tool/function-calling support
-- SSH access to target servers
+- SSH access to configured Linux servers
 
-## Quick start
+## Install
 
-1. Copy the example config:
-
-\`\`\`bash
+```bash
 cp config.example.yaml config.yaml
-\`\`\`
-
-2. Edit \`config.yaml\` with your servers and SSH key paths.
-
-3. Install dependencies:
-
-\`\`\`bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-\`\`
-
-4. Pull a model in Ollama, for example:
-
-\`\`\`bash
 ollama pull qwen3.5:4b
-\`\`
-
-5. Start ServerHelpr:
-
-\`\`\`bash
 python3 -m serverhelpr
-\`\`
+```
 
-## Knowledge base
+## Model
 
-When ServerHelpr cannot confidently understand a request, it can ask the local AI to suggest what the user may have meant.
-
-The clarification flow is:
-
-- **Y** = use the suggested interpretation.
-- **A** = use it and add the interpretation to the local knowledge base.
-- **N** = reject it and rephrase the request.
-
-Learned mappings are stored locally in data/knowledge.json. They are not sent to an external service. Future matching phrases can reuse the saved interpretation, while command execution still passes through the normal policy/approval checks.
-
-## Approval model
-
-When the model requests a command that is not approved, ServerHelpr displays the exact server and command.
-
-- **Y** = allow this execution only.
-- **A** = allow and remember this exact command for that server.
-- **N** = deny.
-
-Commands classified as high-risk always require an interactive confirmation even if they have previously been approved.
-
-This project is intended for private infrastructure. Review commands before approving them.
+The model is configurable in `config.yaml`. Small models can emit tool calls as ordinary JSON text, so ServerHelpr includes recovery for that format. Stronger tool-calling models are recommended for complex multi-step tasks.
