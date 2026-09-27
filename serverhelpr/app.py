@@ -19,9 +19,10 @@ COMMAND DISCIPLINE:
 - For uptime use exactly: uptime
 - For memory use exactly: free -h
 - For disk usage use exactly: df -h
-- Prefer the simplest read-only command that directly answers the question.
+- Prefer the simplest read-only command that directly answers the user's request.
 - Do not invent extra troubleshooting steps after a successful result.
 - If the user did not ask for a change, do not make a change.
+- Keep answers concise unless the user asks for detail.
 
 Never claim to have run a command unless the tool result confirms it.
 Do not attempt to access the Proxmox host unless it is explicitly configured as a target.
@@ -42,12 +43,19 @@ def main():
     ssh = SSHManager(config)
     tools = build_tools(servers)
 
-    print("ServerHelpr 0.2.0")
+    print("ServerHelpr 0.3.0")
     print(f"Model: {ollama.model}")
+    print(
+        f"Ollama: context={ollama.num_ctx}, "
+        f"max_output={ollama.num_predict}, think={ollama.think}"
+    )
     print("Servers:", ", ".join(servers))
     print("Type 'exit' to quit.")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    max_history_messages = int(
+        config.get("ollama", {}).get("max_history_messages", 8)
+    )
 
     while True:
         try:
@@ -63,8 +71,11 @@ def main():
 
         messages.append({"role": "user", "content": user})
 
-        # Deterministic guardrails for common read-only questions. The model
-        # cannot substitute an unrelated command for these intents.
+        # Keep only a small recent window so every request does not re-process
+        # an ever-growing conversation.
+        if len(messages) > max_history_messages + 1:
+            messages = [messages[0]] + messages[-max_history_messages:]
+
         lower_user = user.lower()
         expected_command = None
         if "hostname" in lower_user:
@@ -90,15 +101,18 @@ def main():
                 break
 
             if len(tool_calls) > 1:
-                print(f"AI requested {len(tool_calls)} commands; limiting execution to one at a time.")
+                print(
+                    f"AI requested {len(tool_calls)} commands; "
+                    "limiting execution to one at a time."
+                )
                 messages.append({
                     "role": "tool",
                     "content": json.dumps({
                         "ok": False,
                         "error": (
-                            f"Only one command may be executed per turn. "
-                            f"You requested {len(tool_calls)} commands. "
-                            "Choose the single simplest command that directly answers the user."
+                            "Only one command may be executed per turn. "
+                            "Choose the single simplest command that directly "
+                            "answers the user."
                         ),
                     }),
                 })
@@ -126,11 +140,14 @@ def main():
                 elif not command:
                     tool_result = {"ok": False, "error": "Empty command."}
                 elif expected_command and command != expected_command:
-                    print(f"BLOCKED: command does not match the user's request. Expected: {expected_command}")
+                    print(
+                        f"BLOCKED: command does not match the user's request. "
+                        f"Expected: {expected_command}"
+                    )
                     tool_result = {
                         "ok": False,
                         "error": (
-                            f"Command rejected by deterministic intent guard. "
+                            "Command rejected by deterministic intent guard. "
                             f"For this request, use exactly: {expected_command}"
                         ),
                     }
