@@ -23,8 +23,6 @@ COMMAND DISCIPLINE:
 - Do not invent extra troubleshooting steps after a successful result.
 - If the user did not ask for a change, do not make a change.
 
-Before requesting a command, include a short user-facing action summary in the tool call's reason field. This is not private chain-of-thought.
-
 Never claim to have run a command unless the tool result confirms it.
 Do not attempt to access the Proxmox host unless it is explicitly configured as a target.
 
@@ -64,6 +62,21 @@ def main():
             break
 
         messages.append({"role": "user", "content": user})
+
+        # Deterministic guardrails for common read-only questions. The model
+        # cannot substitute an unrelated command for these intents.
+        lower_user = user.lower()
+        expected_command = None
+        if "hostname" in lower_user:
+            expected_command = "hostname"
+        elif "who am i" in lower_user or "current user" in lower_user:
+            expected_command = "whoami"
+        elif "uptime" in lower_user:
+            expected_command = "uptime"
+        elif "memory" in lower_user or "ram" in lower_user:
+            expected_command = "free -h"
+        elif "disk usage" in lower_user or "disk space" in lower_user:
+            expected_command = "df -h"
 
         while True:
             print("\nAI is working...")
@@ -112,6 +125,15 @@ def main():
                     tool_result = {"ok": False, "error": "Unknown server."}
                 elif not command:
                     tool_result = {"ok": False, "error": "Empty command."}
+                elif expected_command and command != expected_command:
+                    print(f"BLOCKED: command does not match the user's request. Expected: {expected_command}")
+                    tool_result = {
+                        "ok": False,
+                        "error": (
+                            f"Command rejected by deterministic intent guard. "
+                            f"For this request, use exactly: {expected_command}"
+                        ),
+                    }
                 elif policy.is_allowed(server_name, command) or policy.request(
                     server_name, command
                 ):
