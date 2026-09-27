@@ -27,6 +27,7 @@ COMMAND DISCIPLINE:
 - For uptime use exactly: uptime
 - For memory use exactly: free -h
 - For disk usage use exactly: df -h
+- For local IP/address use exactly: hostname -I
 - Prefer the simplest read-only command that directly answers the user's request.
 - Do not invent extra troubleshooting steps after a successful result.
 - If the user did not ask for a change, do not make a change.
@@ -199,6 +200,9 @@ def main():
             expected_command = "free -h"
         elif "disk usage" in lower_user or "disk space" in lower_user:
             expected_command = "df -h"
+        elif ("local ip" in lower_user or "local ip address" in lower_user
+              or "local address" in lower_user or "ip address" in lower_user):
+            expected_command = "hostname -I"
 
         while True:
             result, elapsed = _run_with_spinner(
