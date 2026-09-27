@@ -114,6 +114,41 @@ def _show_result(result):
     console.print(Panel(table, title=title, border_style=border))
 
 
+def _parse_tool_arguments(function):
+    """Normalize Ollama tool arguments from small-model responses."""
+    args = function.get("arguments", {})
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _run_command(ssh, servers, server_name, command, label):
+    """Execute one already-validated command and render its result."""
+    _show_tool_request(server_name, command)
+    try:
+        tool_result, command_elapsed = _run_with_spinner(
+            label,
+            lambda: ssh.run(server_name, servers[server_name], command),
+        )
+        tool_result["ok"] = tool_result.get("exit_code") == 0
+        _show_tool_request(server_name, command, command_elapsed)
+        _show_result(tool_result)
+        return tool_result
+    except Exception as exc:
+        tool_result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        console.print(Panel(
+            tool_result["error"],
+            title="[bold red]EXECUTION ERROR[/bold red]",
+            border_style="red",
+        ))
+        return tool_result
+
 def main():
     config = load_config()
     servers = config["servers"]
@@ -175,13 +210,34 @@ def main():
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
-                console.print(
-                    Panel(
-                        message.get("content", ""),
-                        title=f"[bold cyan]AI RESPONSE[/bold cyan]  [dim]{elapsed:.2f}s[/dim]",
-                        border_style="cyan",
+                content = (message.get("content") or "").strip()
+                fallback_server = None
+                if expected_command:
+                    if len(servers) == 1:
+                        fallback_server = next(iter(servers))
+                    else:
+                        for name in servers:
+                            if name.lower() in lower_user:
+                                fallback_server = name
+                                break
+                if expected_command and fallback_server:
+                    console.print(Panel(
+                        "Model returned no tool call; using the deterministic command: " + expected_command,
+                        title="[bold yellow]MODEL FALLBACK[/bold yellow]",
+                        border_style="yellow",
+                    ))
+                    tool_result = _run_command(
+                        ssh, servers, fallback_server, expected_command,
+                        "Executing on " + fallback_server + "…",
                     )
-                )
+                    messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                    continue
+                display = content or "The model returned no tool call and no text response."
+                console.print(Panel(
+                    display,
+                    title=f"[bold cyan]AI RESPONSE[/bold cyan]  [dim]{elapsed:.2f}s[/dim]",
+                    border_style="cyan",
+                ))
                 break
 
             if len(tool_calls) > 1:
@@ -210,11 +266,25 @@ def main():
             name = function.get("name")
 
             if name != "run_command":
+                tool_result = {"ok": False, "error": f"Unsupported tool requested: {name!r}"}
+                console.print(Panel(
+                    tool_result["error"],
+                    title="[bold red]UNSUPPORTED TOOL[/bold red]",
+                    border_style="red",
+                ))
+                messages.append({"role": "tool", "content": json.dumps(tool_result)})
                 continue
 
-            args = function.get("arguments", {})
-            if isinstance(args, str):
-                args = json.loads(args)
+            args = _parse_tool_arguments(function)
+            if args is None:
+                tool_result = {"ok": False, "error": "Malformed tool arguments; expected a JSON object."}
+                console.print(Panel(
+                    tool_result["error"],
+                    title="[bold red]INVALID TOOL ARGUMENTS[/bold red]",
+                    border_style="red",
+                ))
+                messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                continue
 
             server_name = args.get("server")
             command = args.get("command")
@@ -250,31 +320,10 @@ def main():
             elif policy.is_allowed(server_name, command) or policy.request(
                 server_name, command
             ):
-                _show_tool_request(server_name, command)
-                try:
-                    tool_result, command_elapsed = _run_with_spinner(
-                        f"Executing on {server_name}…",
-                        lambda: ssh.run(
-                            server_name,
-                            servers[server_name],
-                            command,
-                        ),
-                    )
-                    tool_result["ok"] = tool_result["exit_code"] == 0
-                    _show_tool_request(server_name, command, command_elapsed)
-                    _show_result(tool_result)
-                except Exception as exc:
-                    tool_result = {
-                        "ok": False,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                    console.print(
-                        Panel(
-                            tool_result["error"],
-                            title="[bold red]EXECUTION ERROR[/bold red]",
-                            border_style="red",
-                        )
-                    )
+                tool_result = _run_command(
+                    ssh, servers, server_name, command,
+                    f"Executing on {server_name}…",
+                )
             else:
                 tool_result = {
                     "ok": False,
