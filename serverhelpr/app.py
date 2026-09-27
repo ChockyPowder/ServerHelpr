@@ -1,4 +1,12 @@
 import json
+import time
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
 
 from .config import load_config
 from .ollama import OllamaClient
@@ -39,6 +47,73 @@ The user wants practical, evidence-based troubleshooting. Keep command output co
 """
 
 
+console = Console()
+
+
+def _run_with_spinner(label, fn):
+    start = time.perf_counter()
+    with console.status(Spinner("dots", text=f" {label}"), spinner_style="cyan"):
+        result = fn()
+    return result, time.perf_counter() - start
+
+
+def _show_banner(ollama, servers):
+    title = Text("SERVERHELPR", style="bold cyan")
+    subtitle = Text("local Linux operations agent", style="dim")
+    console.print(Panel.fit(
+        Text.assemble(title, "\n", subtitle),
+        border_style="cyan",
+        padding=(0, 2),
+    ))
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim")
+    table.add_column()
+    table.add_row("Model", ollama.model)
+    table.add_row("Ollama", f"context={ollama.num_ctx}  max_output={ollama.num_predict}  think={ollama.think}")
+    table.add_row("Targets", ", ".join(servers))
+    console.print(table)
+    console.print()
+
+
+def _show_tool_request(server, command, elapsed=None):
+    body = Text()
+    body.append("TARGET  ", style="bold")
+    body.append(server + "\n", style="cyan")
+    body.append("COMMAND ", style="bold")
+    body.append(command)
+    if elapsed is not None:
+        body.append(f"\n\nCompleted in {elapsed:.2f}s", style="dim")
+
+    console.print(Panel(
+        body,
+        title="[bold yellow]AI TOOL REQUEST[/bold yellow]",
+        border_style="yellow",
+    ))
+
+
+def _show_result(result):
+    code = result.get("exit_code")
+    success = code == 0
+    title = "[bold green]COMMAND RESULT[/bold green]" if success else "[bold red]COMMAND FAILED[/bold red]"
+    border = "green" if success else "red"
+
+    table = Table.grid(padding=(0, 1))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("Exit", str(code))
+
+    stdout = result.get("stdout", "").strip()
+    stderr = result.get("stderr", "").strip()
+
+    if stdout:
+        table.add_row("stdout", stdout)
+    if stderr:
+        table.add_row("stderr", stderr)
+
+    console.print(Panel(table, title=title, border_style=border))
+
+
 def main():
     config = load_config()
     servers = config["servers"]
@@ -51,14 +126,8 @@ def main():
     ssh = SSHManager(config)
     tools = build_tools(servers)
 
-    print("ServerHelpr 0.3.0")
-    print(f"Model: {ollama.model}")
-    print(
-        f"Ollama: context={ollama.num_ctx}, "
-        f"max_output={ollama.num_predict}, think={ollama.think}"
-    )
-    print("Servers:", ", ".join(servers))
-    print("Type 'exit' to quit.")
+    _show_banner(ollama, servers)
+    console.print("[dim]Type 'exit' to quit.[/dim]")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     max_history_messages = int(
@@ -67,9 +136,10 @@ def main():
 
     while True:
         try:
-            user = input("\nYou: ").strip()
+            console.print()
+            user = Prompt.ask("[bold cyan]You[/bold cyan]").strip()
         except (EOFError, KeyboardInterrupt):
-            print()
+            console.print()
             break
 
         if not user:
@@ -96,20 +166,31 @@ def main():
             expected_command = "df -h"
 
         while True:
-            print("\nAI is working...")
-            result = ollama.chat(messages, tools)
+            result, elapsed = _run_with_spinner(
+                "Thinking / planning…",
+                lambda: ollama.chat(messages, tools),
+            )
             message = result.get("message", {})
             messages.append(message)
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
-                print("\nAI:", message.get("content", ""))
+                console.print(
+                    Panel(
+                        message.get("content", ""),
+                        title=f"[bold cyan]AI RESPONSE[/bold cyan]  [dim]{elapsed:.2f}s[/dim]",
+                        border_style="cyan",
+                    )
+                )
                 break
 
             if len(tool_calls) > 1:
-                print(
-                    f"AI requested {len(tool_calls)} commands; "
-                    "limiting execution to one at a time."
+                console.print(
+                    Panel(
+                        f"AI requested {len(tool_calls)} commands; limiting execution to one at a time.",
+                        title="[bold red]TOOL LIMIT[/bold red]",
+                        border_style="red",
+                    )
                 )
                 messages.append({
                     "role": "tool",
@@ -124,63 +205,92 @@ def main():
                 })
                 continue
 
-            for call in tool_calls[:1]:
-                function = call.get("function", {})
-                name = function.get("name")
+            call = tool_calls[0]
+            function = call.get("function", {})
+            name = function.get("name")
 
-                if name != "run_command":
-                    continue
+            if name != "run_command":
+                continue
 
-                args = function.get("arguments", {})
-                if isinstance(args, str):
-                    args = json.loads(args)
+            args = function.get("arguments", {})
+            if isinstance(args, str):
+                args = json.loads(args)
 
-                server_name = args.get("server")
-                command = args.get("command")
+            server_name = args.get("server")
+            command = args.get("command")
 
-                if command:
-                    print(f"AI plan: Run {command} on {server_name}.")
-
-                if server_name not in servers:
-                    tool_result = {"ok": False, "error": "Unknown server."}
-                elif not command:
-                    tool_result = {"ok": False, "error": "Empty command."}
-                elif expected_command and command != expected_command:
-                    print(
-                        f"BLOCKED: command does not match the user's request. "
-                        f"Expected: {expected_command}"
+            if command:
+                console.print(
+                    Panel(
+                        f"[bold]Planning:[/bold] run [cyan]{command}[/cyan] on [cyan]{server_name}[/cyan]",
+                        title="[bold cyan]AI PLAN[/bold cyan]",
+                        border_style="cyan",
                     )
-                    tool_result = {
-                        "ok": False,
-                        "error": (
-                            "Command rejected by deterministic intent guard. "
-                            f"For this request, use exactly: {expected_command}"
-                        ),
-                    }
-                elif policy.is_allowed(server_name, command) or policy.request(
-                    server_name, command
-                ):
-                    try:
-                        tool_result = ssh.run(
+                )
+
+            if server_name not in servers:
+                tool_result = {"ok": False, "error": "Unknown server."}
+            elif not command:
+                tool_result = {"ok": False, "error": "Empty command."}
+            elif expected_command and command != expected_command:
+                console.print(
+                    Panel(
+                        f"Expected: {expected_command}\nReceived: {command}",
+                        title="[bold red]INTENT GUARD BLOCKED[/bold red]",
+                        border_style="red",
+                    )
+                )
+                tool_result = {
+                    "ok": False,
+                    "error": (
+                        "Command rejected by deterministic intent guard. "
+                        f"For this request, use exactly: {expected_command}"
+                    ),
+                }
+            elif policy.is_allowed(server_name, command) or policy.request(
+                server_name, command
+            ):
+                _show_tool_request(server_name, command)
+                try:
+                    tool_result, command_elapsed = _run_with_spinner(
+                        f"Executing on {server_name}…",
+                        lambda: ssh.run(
                             server_name,
                             servers[server_name],
                             command,
-                        )
-                        tool_result["ok"] = tool_result["exit_code"] == 0
-                    except Exception as exc:
-                        tool_result = {
-                            "ok": False,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        }
-                else:
+                        ),
+                    )
+                    tool_result["ok"] = tool_result["exit_code"] == 0
+                    _show_tool_request(server_name, command, command_elapsed)
+                    _show_result(tool_result)
+                except Exception as exc:
                     tool_result = {
                         "ok": False,
-                        "error": "User denied command execution.",
+                        "error": f"{type(exc).__name__}: {exc}",
                     }
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": json.dumps(tool_result),
-                    }
+                    console.print(
+                        Panel(
+                            tool_result["error"],
+                            title="[bold red]EXECUTION ERROR[/bold red]",
+                            border_style="red",
+                        )
+                    )
+            else:
+                tool_result = {
+                    "ok": False,
+                    "error": "User denied command execution.",
+                }
+                console.print(
+                    Panel(
+                        "Command denied by user.",
+                        title="[bold yellow]COMMAND DENIED[/bold yellow]",
+                        border_style="yellow",
+                    )
                 )
+
+            messages.append(
+                {
+                    "role": "tool",
+                    "content": json.dumps(tool_result),
+                }
+            )
