@@ -13,7 +13,7 @@ from .knowledge import KnowledgeBase
 from .ollama import OllamaClient
 from .policy import Policy
 from .ssh import SSHManager
-from .tools import build_tools, command_for_tool
+from .tools import build_tools, command_for_tool, tool_is_mutating
 
 
 SYSTEM_PROMPT = """You are ServerHelpr, a local-first AI infrastructure agent.
@@ -39,6 +39,8 @@ SAFETY:
 - Only change systems when the user requested the change or it is necessary to fulfill the explicit task.
 - Never claim execution without tool evidence.
 - Unrestricted configured test servers may execute without approval.
+- Mutating tools are allowed only when the user's request explicitly asks for a change. A read-only/status question must never trigger start, stop, restart, install, update, upgrade, write, delete, or arbitrary run_command actions.
+- If the request is read-only, use only inspection/read tools until the task is answered.
 
 When a task needs investigation, investigate first. When a task needs modification, inspect before editing. When a task changes a service or file, verify afterwards.
 
@@ -51,6 +53,29 @@ TOOL USE EXAMPLES:
 Do not answer an infrastructure status/change question from memory when a tool can check the real server.
 If your previous response did not execute a tool, correct that on the next step by selecting the appropriate tool.
 """
+
+
+
+_MUTATION_PATTERNS = [
+    r"\b(?:please\s+)?(?:start|stop|restart|reboot|shutdown|enable|disable)\b",
+    r"\b(?:install|uninstall|remove|purge|upgrade|downgrade|update)\b",
+    r"\b(?:change|modify|edit|write|create|delete|replace|rename|move|copy)\b",
+    r"\b(?:configure|reconfigure|repair|fix|restore|reset|set)\b",
+]
+
+_NEGATED_ACTION_PATTERNS = [
+    r"\b(?:should|would|could|can)\s+(?:i|we)\b.*\b(?:start|stop|restart|reboot|shutdown|install|remove|upgrade|change|modify|edit|delete|configure|fix)\b",
+    r"\bwhat\s+(?:would|will|happens?|happen)\b.*\b(?:if|when)\b",
+]
+
+def request_allows_mutation(user_text: str) -> bool:
+    import re
+    text = " ".join(str(user_text or "").lower().split())
+    if not text:
+        return False
+    if any(re.search(pattern, text) for pattern in _NEGATED_ACTION_PATTERNS):
+        return False
+    return any(re.search(pattern, text) for pattern in _MUTATION_PATTERNS)
 
 
 console = Console()
@@ -199,6 +224,7 @@ def main():
         last_call = None
         repeated_calls = 0
         forced_tool_retry = 0
+        mutation_allowed = request_allows_mutation(user)
 
         for step in range(1, max_steps + 1):
             try:
@@ -225,11 +251,12 @@ def main():
                     messages.append({
                         "role": "user",
                         "content": (
-                            "STOP. You have not completed the infrastructure request. "
-                            "Do not explain or speculate. Select exactly one appropriate tool "
-                            "and call it now. Use the real configured server and inspect the "
-                            "actual system. If the previous attempt failed, use a different "
-                            "appropriate tool or correct its arguments."
+                            "STOP. Continue the infrastructure request with exactly one appropriate tool. "
+                            "Use the real configured server and inspect actual state. "
+                            "If the user's request is read-only/status-only, select ONLY a read-only "
+                            "inspection tool; do not start, stop, restart, install, update, upgrade, "
+                            "write, delete, or run an arbitrary command. If the previous tool failed, "
+                            "choose another appropriate inspection tool or correct its arguments."
                         ),
                     })
                     console.print(Panel(
@@ -296,6 +323,20 @@ def main():
                 ))
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
+            elif tool_is_mutating(name) and not mutation_allowed:
+                tool_result = {
+                    "ok": False,
+                    "error": (
+                        "BLOCKED: this user request is read-only. The selected tool can modify "
+                        "the server, but the request does not explicitly authorize a change. "
+                        "Choose a read-only inspection tool instead."
+                    ),
+                }
+                console.print(Panel(
+                    f"Tool: {name}\nUser request classified as read-only.",
+                    title="[bold yellow]MUTATING TOOL BLOCKED[/bold yellow]",
+                    border_style="yellow",
+                ))
             else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
