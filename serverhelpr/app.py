@@ -104,12 +104,9 @@ def main():
 
                 server_name = args.get("server")
                 command = args.get("command")
-                reason = args.get("reason", "").strip()
 
-                if reason:
-                    print(f"AI plan: {reason}")
-                else:
-                    print("AI plan: execute the requested diagnostic command.")
+                if command:
+                    print(f"AI plan: Run {command} on {server_name}.")
 
                 if server_name not in servers:
                     tool_result = {"ok": False, "error": "Unknown server."}
