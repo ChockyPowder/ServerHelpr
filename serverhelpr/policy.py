@@ -1,7 +1,5 @@
 from pathlib import Path
 import json
-import re
-from typing import Optional
 
 
 class Policy:
@@ -47,7 +45,14 @@ class Policy:
     def is_high_risk(self, command: str) -> bool:
         return any(pattern in command for pattern in self.high_risk)
 
+    def is_unrestricted(self, server: str) -> bool:
+        server_cfg = self.config.get("servers", {}).get(server, {})
+        return bool(server_cfg.get("unrestricted", False))
+
     def is_allowed(self, server: str, command: str) -> bool:
+        if self.is_unrestricted(server):
+            return True
+
         if self.is_high_risk(command):
             return False
 
