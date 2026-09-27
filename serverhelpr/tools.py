@@ -20,16 +20,12 @@ def build_tools(servers: dict) -> list:
                             "enum": server_names,
                             "description": "Configured server name."
                         },
-                        "reason": {
-                            "type": "string",
-                            "description": "Brief user-facing explanation of why this command is needed. Do not include private chain-of-thought."
-                        },
                         "command": {
                             "type": "string",
                             "description": "The exact shell command to execute."
                         }
                     },
-                    "required": ["server", "command", "reason"]
+                    "required": ["server", "command"]
                 }
             }
         }
