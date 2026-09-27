@@ -24,6 +24,14 @@ COMMAND DISCIPLINE:
 - If the user did not ask for a change, do not make a change.
 - Keep answers concise unless the user asks for detail.
 
+FAILURE DISCIPLINE:
+- Treat command output, stderr, and exit codes as authoritative evidence.
+- If a command fails, report the actual error before suggesting a fix.
+- Do not claim a lock is stale, a service is broken, a package is missing, or another condition exists unless command output establishes it.
+- Do not perform cleanup or remediation merely because a command failed.
+- If the user has not explicitly asked to fix a failure, do not execute a corrective command.
+- Never replace a failed command with a different destructive command unless the user explicitly requests remediation.
+
 Never claim to have run a command unless the tool result confirms it.
 Do not attempt to access the Proxmox host unless it is explicitly configured as a target.
 
@@ -71,8 +79,6 @@ def main():
 
         messages.append({"role": "user", "content": user})
 
-        # Keep only a small recent window so every request does not re-process
-        # an ever-growing conversation.
         if len(messages) > max_history_messages + 1:
             messages = [messages[0]] + messages[-max_history_messages:]
 
@@ -160,7 +166,7 @@ def main():
                             servers[server_name],
                             command,
                         )
-                        tool_result["ok"] = True
+                        tool_result["ok"] = tool_result["exit_code"] == 0
                     except Exception as exc:
                         tool_result = {
                             "ok": False,
