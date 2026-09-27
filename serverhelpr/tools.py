@@ -88,3 +88,21 @@ def command_for_tool(name: str, args: dict) -> str | None:
 
 def tool_requires_command(name: str) -> bool:
     return name not in {"remember_knowledge", "recall_knowledge"}
+
+
+READ_ONLY_TOOLS = {
+    "server_info", "network_info", "process_list", "service_status",
+    "package_status", "disk_usage", "memory_usage", "list_directory",
+    "read_file", "search_files", "recall_knowledge",
+}
+
+MUTATING_TOOLS = {
+    "service_action", "package_install", "package_update",
+    "package_upgrade", "write_file", "run_command",
+}
+
+def tool_is_read_only(name: str) -> bool:
+    return name in READ_ONLY_TOOLS
+
+def tool_is_mutating(name: str) -> bool:
+    return name in MUTATING_TOOLS
