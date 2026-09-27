@@ -339,23 +339,28 @@ def main():
             elif tool_is_mutating(name):
                 server = args.get("server")
                 command = command_for_tool(name, args)
-                if not policy.request(server, command):
-                    tool_result = {"ok": False, "error": "User denied execution of the mutating command."}
-                elif server not in servers:
+                if server not in servers:
                     tool_result = {"ok": False, "error": f"Unknown server: {server!r}"}
                 elif not command:
                     tool_result = {"ok": False, "error": f"Unsupported tool: {name!r}"}
-                else:
+                elif policy.is_remembered(server, command):
                     console.print(Panel(
-                        f"[bold]Step {step}/{max_steps}[/bold]\nTool: [cyan]{name}[/cyan]\nTarget: [cyan]{server}[/cyan]\nCommand: [cyan]{command}[/cyan]",
-                        title="[bold cyan]AI PLAN[/bold cyan]", border_style="cyan",
+                        f"[bold]Remembered approval[/bold]\nTool: [cyan]{name}[/cyan]\nTarget: [cyan]{server}[/cyan]\nCommand: [cyan]{command}[/cyan]",
+                        title="[bold green]APPROVED POLICY[/bold green]", border_style="green",
                     ))
-                    if policy.is_allowed(server, command):
-                        tool_result = execute(ssh, servers, server, command, name)
-                        if tool_result.get("ok"):
-                            successful_tool_executed = True
+                    tool_result = execute(ssh, servers, server, command, name)
+                    if tool_result.get("ok"):
+                        successful_tool_executed = True
+                else:
+                    if policy.request(server, command):
+                        if policy.is_allowed(server, command):
+                            tool_result = execute(ssh, servers, server, command, name)
+                            if tool_result.get("ok"):
+                                successful_tool_executed = True
+                        else:
+                            tool_result = {"ok": False, "error": "Execution denied by policy."}
                     else:
-                        tool_result = {"ok": False, "error": "Execution denied by policy."}
+                        tool_result = {"ok": False, "error": "User denied execution of the mutating command."}
             else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
