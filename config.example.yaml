@@ -1,0 +1,51 @@
+ollama:
+  url: http://127.0.0.1:11434
+  model: qwen3.5:4b
+  temperature: 0.1
+
+ssh:
+  connect_timeout: 10
+  command_timeout: 30
+  known_hosts: ~/.ssh/known_hosts
+
+servers:
+  web01:
+    host: 192.168.1.101
+    user: aiops
+    key: ~/.ssh/serverhelpr_ed25519
+
+  # Add more servers here.
+  # db01:
+  #   host: 192.168.1.102
+  #   user: aiops
+  #   key: ~/.ssh/serverhelpr_ed25519
+
+policy:
+  # Safe read-only commands can be pre-approved here.
+  allowed_commands:
+    - uptime
+    - whoami
+    - hostname
+    - free -h
+    - df -h
+    - systemctl --failed
+    - docker ps
+    - ss -tulpn
+
+  # These always require an interactive confirmation.
+  high_risk_patterns:
+    - "rm "
+    - "rm -"
+    - "mkfs"
+    - "dd "
+    - "shutdown"
+    - "reboot"
+    - "poweroff"
+    - "userdel"
+    - "passwd "
+    - "iptables"
+    - "nft "
+    - "curl |"
+    - "wget |"
+
+data_dir: ./data
