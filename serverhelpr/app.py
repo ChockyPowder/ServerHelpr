@@ -353,12 +353,9 @@ def main():
                         successful_tool_executed = True
                 else:
                     if policy.request(server, command):
-                        if policy.is_allowed(server, command):
-                            tool_result = execute(ssh, servers, server, command, name)
-                            if tool_result.get("ok"):
-                                successful_tool_executed = True
-                        else:
-                            tool_result = {"ok": False, "error": "Execution denied by policy."}
+                        tool_result = execute(ssh, servers, server, command, name)
+                        if tool_result.get("ok"):
+                            successful_tool_executed = True
                     else:
                         tool_result = {"ok": False, "error": "User denied execution of the mutating command."}
             else:
