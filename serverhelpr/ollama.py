@@ -27,10 +27,27 @@ class OllamaClient:
             },
         }
 
-        response = requests.post(
-            f"{self.url}/api/chat",
-            json=payload,
-            timeout=300,
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.post(
+                f"{self.url}/api/chat",
+                json=payload,
+                timeout=300,
+            )
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = response.text.strip()
+            raise RuntimeError(
+                f"Ollama API error {response.status_code}: {detail or response.reason}"
+            ) from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Could not reach Ollama at {self.url}: {exc}") from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Ollama returned invalid JSON") from exc
+
+        if not isinstance(data, dict):
+            raise RuntimeError("Ollama returned an unexpected response shape")
+
+        return data
