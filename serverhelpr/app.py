@@ -178,9 +178,14 @@ def _deterministic_command(user_text):
     if ("local ip" in lower or "local ip address" in lower
             or "local address" in lower or "ip address" in lower):
         return "hostname -I"
+
+    # Common service checks are deterministic too; this avoids asking a small
+    # model to invent systemctl syntax.
+    if "nginx" in lower and ("installed" in lower or "install" in lower):
+        return "dpkg-query -W -f='${Status}\\n' nginx"
+    if "nginx" in lower and ("running" in lower or "active" in lower or "is nginx" in lower):
+        return "systemctl is-active nginx"
     return None
-
-
 def _show_direct_answer(result):
     if result.get("ok"):
         output = result.get("stdout", "").strip()
@@ -264,13 +269,16 @@ def main():
         expected_server = None
 
         if learned:
+            learned_command = learned.get("command")
+            if learned_command == "systemctl is active nginx":
+                learned_command = "systemctl is-active nginx"
             console.print(Panel(
                 f"Matched learned intent: {learned.get('meaning', learned.get('phrase', user))}\\n"
-                f"Command: {learned.get('command')}",
+                f"Command: {learned_command}",
                 title="[bold green]KNOWLEDGE BASE MATCH[/bold green]",
                 border_style="green",
             ))
-            expected_command = learned.get("command")
+            expected_command = learned_command
             if learned.get("server") in servers:
                 expected_server = learned.get("server")
 
