@@ -7,11 +7,13 @@ def build_tools(servers: dict) -> list:
             "function": {
                 "name": "run_command",
                 "description": (
-                    "Run one shell command on exactly one configured Linux server. "
+                    "Run exactly one shell command on exactly one configured Linux server. "
                     "The command is executed with the permissions configured for that server. "
                     "For an explicitly unrestricted test sandbox, the command runs as root. "
-                    "Use this only for the smallest command needed to answer the user's request. "
-                    "Do not invent extra commands after a command succeeds."
+                    "Use the smallest command that directly answers the user request. "
+                    "Examples: hostname -> hostname; uptime -> uptime; current user -> whoami; "
+                    "memory/RAM -> free -h; disk usage/space -> df -h. "
+                    "Never add a second command when one command is sufficient."
                 ),
                 "parameters": {
                     "type": "object",
