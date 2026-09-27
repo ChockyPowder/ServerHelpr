@@ -1,3 +1,5 @@
+import os
+
 import paramiko
 
 
@@ -12,6 +14,13 @@ class SSHManager:
         key_path = server.get("key")
         if not key_path:
             raise ValueError(f"No SSH key configured for {server_name}")
+
+        key_path = os.path.expanduser(os.path.expandvars(key_path))
+
+        if not os.path.isfile(key_path):
+            raise FileNotFoundError(
+                f"SSH private key not found for {server_name}: {key_path}"
+            )
 
         client = paramiko.SSHClient()
         client.load_system_host_keys()
