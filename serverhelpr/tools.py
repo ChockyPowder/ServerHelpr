@@ -8,9 +8,10 @@ def build_tools(servers: dict) -> list:
                 "name": "run_command",
                 "description": (
                     "Run one shell command on exactly one configured Linux server. "
+                    "The command is executed with the permissions configured for that server. "
+                    "For an explicitly unrestricted test sandbox, the command runs as root. "
                     "Use this only for the smallest command needed to answer the user's request. "
-                    "Prefer read-only diagnostics. Do not create SSH keys, change SSH "
-                    "configuration, manage users, or change credentials unless explicitly requested."
+                    "Do not invent extra commands after a command succeeds."
                 ),
                 "parameters": {
                     "type": "object",
