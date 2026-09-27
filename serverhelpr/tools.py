@@ -8,8 +8,9 @@ def build_tools(servers: dict) -> list:
                 "name": "run_command",
                 "description": (
                     "Run one shell command on exactly one configured Linux server. "
-                    "Use this to inspect logs, services, CPU, memory, disk, Docker, "
-                    "network state, or perform an approved administrative action."
+                    "Use this only for the smallest command needed to answer the user's request. "
+                    "Prefer read-only diagnostics. Do not create SSH keys, change SSH "
+                    "configuration, manage users, or change credentials unless explicitly requested."
                 ),
                 "parameters": {
                     "type": "object",
@@ -19,12 +20,16 @@ def build_tools(servers: dict) -> list:
                             "enum": server_names,
                             "description": "Configured server name."
                         },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief user-facing explanation of why this command is needed. Do not include private chain-of-thought."
+                        },
                         "command": {
                             "type": "string",
                             "description": "The exact shell command to execute."
                         }
                     },
-                    "required": ["server", "command"]
+                    "required": ["server", "command", "reason"]
                 }
             }
         }
