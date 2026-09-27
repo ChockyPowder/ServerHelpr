@@ -219,6 +219,24 @@ def main():
               or "local address" in lower_user or "ip address" in lower_user):
             expected_command = "hostname -I"
 
+        if learned and expected_server and expected_command:
+            if policy.is_allowed(expected_server, expected_command) or policy.request(
+                expected_server, expected_command
+            ):
+                tool_result = _run_command(
+                    ssh, servers, expected_server, expected_command,
+                    f"Executing on {expected_server}…",
+                )
+                messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                # Let the model turn the real command result into the final answer.
+            else:
+                console.print(Panel(
+                    "Command denied by user.",
+                    title="[bold yellow]COMMAND DENIED[/bold yellow]",
+                    border_style="yellow",
+                ))
+                continue
+
         while True:
             result, elapsed = _run_with_spinner(
                 "Thinking / planning…",
@@ -308,12 +326,23 @@ def main():
                             title="[bold green]ADDED TO KNOWLEDGE BASE[/bold green]",
                             border_style="green",
                         ))
-                    tool_result = _run_command(
-                        ssh, servers, suggested_server, suggested_command,
-                        f"Executing on {suggested_server}…",
-                    )
-                    messages.append({"role": "tool", "content": json.dumps(tool_result)})
-                    continue
+
+                    if policy.is_allowed(suggested_server, suggested_command) or policy.request(
+                        suggested_server, suggested_command
+                    ):
+                        tool_result = _run_command(
+                            ssh, servers, suggested_server, suggested_command,
+                            f"Executing on {suggested_server}…",
+                        )
+                        messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                        continue
+
+                    console.print(Panel(
+                        "Command denied by user.",
+                        title="[bold yellow]COMMAND DENIED[/bold yellow]",
+                        border_style="yellow",
+                    ))
+                    break
 
                 console.print(Panel(
                     "The AI suggestion did not contain a usable server and command, so nothing was executed.",
