@@ -2,6 +2,14 @@ ollama:
   url: http://127.0.0.1:11434
   model: qwen3.5:4b
   temperature: 0.1
+  num_ctx: 8192
+  num_predict: 512
+  think: false
+  timeout: 300
+
+agent:
+  max_steps: 16
+  max_history_messages: 20
 
 ssh:
   connect_timeout: 10
@@ -14,21 +22,14 @@ servers:
     user: aiops
     key: ~/.ssh/serverhelpr_ed25519
 
-  # Disposable AI test box example:
+  # Disposable AI test box:
   # interactbox:
   #   host: 192.168.2.161
   #   user: aiops
   #   key: ~/.ssh/serverhelpr_ed25519
   #   unrestricted: true
 
-  # Add more servers here.
-  # db01:
-  #   host: 192.168.1.102
-  #   user: aiops
-  #   key: ~/.ssh/serverhelpr_ed25519
-
 policy:
-  # Safe read-only commands can be pre-approved here.
   allowed_commands:
     - uptime
     - whoami
@@ -39,7 +40,6 @@ policy:
     - docker ps
     - ss -tulpn
 
-  # These always require an interactive confirmation on restricted servers.
   high_risk_patterns:
     - "rm "
     - "rm -"
