@@ -50,15 +50,15 @@ class Policy:
         return bool(server_cfg.get("unrestricted", False))
 
     def is_allowed(self, server: str, command: str) -> bool:
-        if self.is_unrestricted(server):
-            return True
-
         if self.is_high_risk(command):
             return False
-
         if command in self.base_allowed:
             return True
+        return command in set(self.approved.get(server, []))
 
+    def is_remembered(self, server: str, command: str) -> bool:
+        if self.is_high_risk(command):
+            return False
         return command in set(self.approved.get(server, []))
 
     def request(self, server: str, command: str) -> bool:
