@@ -41,6 +41,15 @@ SAFETY:
 - Unrestricted configured test servers may execute without approval.
 
 When a task needs investigation, investigate first. When a task needs modification, inspect before editing. When a task changes a service or file, verify afterwards.
+
+TOOL USE EXAMPLES:
+- "is nginx running" -> call service_status with service="nginx".
+- "is nginx installed" -> call package_status with package="nginx".
+- "what is the hostname" -> call server_info.
+- "what is the IP" -> call network_info.
+- "restart nginx" -> call service_action with service="nginx", action="restart", then verify with service_status.
+Do not answer an infrastructure status/change question from memory when a tool can check the real server.
+If your previous response did not execute a tool, correct that on the next step by selecting the appropriate tool.
 """
 
 
@@ -187,6 +196,10 @@ def main():
 
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+        last_call = None
+        repeated_calls = 0
+        forced_tool_retry = 0
+
         for step in range(1, max_steps + 1):
             try:
                 result, elapsed = spinner("Thinking / planning…", lambda: ollama.chat(messages, tools))
@@ -207,6 +220,24 @@ def main():
             messages.append(message)
 
             if not calls:
+                if content and forced_tool_retry < 2:
+                    forced_tool_retry += 1
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "STOP. You have not completed the infrastructure request. "
+                            "Do not explain or speculate. Select exactly one appropriate tool "
+                            "and call it now. Use the real configured server and inspect the "
+                            "actual system. If the previous attempt failed, use a different "
+                            "appropriate tool or correct its arguments."
+                        ),
+                    })
+                    console.print(Panel(
+                        "Model produced an answer without executing a tool; requesting an actual tool action.",
+                        title="[bold yellow]AGENT TOOL WATCHDOG[/bold yellow]",
+                        border_style="yellow",
+                    ))
+                    continue
                 if content:
                     console.print(Panel(
                         content,
@@ -224,8 +255,45 @@ def main():
             function = call.get("function", {})
             name = function.get("name")
             args = parse_args(function)
+
+            call_signature = json.dumps(
+                {"name": name, "arguments": args}, sort_keys=True, ensure_ascii=False
+            )
+            if call_signature == last_call:
+                repeated_calls += 1
+            else:
+                repeated_calls = 0
+            last_call = call_signature
+
+            if repeated_calls >= 2:
+                tool_result = {
+                    "ok": False,
+                    "error": (
+                        "The agent repeated the exact same tool call three times. "
+                        "Do not repeat it. Re-evaluate the request and choose another "
+                        "tool or provide a final evidence-based answer."
+                    ),
+                }
+                console.print(Panel(
+                    f"{name} {json.dumps(args, ensure_ascii=False)}",
+                    title="[bold red]REPEATED TOOL CALL BLOCKED[/bold red]",
+                    border_style="red",
+                ))
+                messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                forced_tool_retry += 1
+                continue
             if args is None:
-                tool_result = {"ok": False, "error": "Malformed tool arguments."}
+                tool_result = {"ok": False, "error": "Malformed tool arguments. Return valid JSON arguments for the selected tool."}
+            elif name not in {t["function"]["name"] for t in tools}:
+                tool_result = {
+                    "ok": False,
+                    "error": f"Unknown tool {name!r}. Choose one of the advertised tools and call it again.",
+                }
+                console.print(Panel(
+                    str(name),
+                    title="[bold red]UNKNOWN TOOL REQUEST[/bold red]",
+                    border_style="red",
+                ))
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
             else:
