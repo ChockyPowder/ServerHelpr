@@ -1,4 +1,5 @@
 import os
+import shlex
 
 import paramiko
 
@@ -26,6 +27,11 @@ class SSHManager:
         client.load_system_host_keys()
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
+        execute_as_root = bool(server.get("unrestricted", False))
+        executed_command = command
+        if execute_as_root:
+            executed_command = f"sudo -n -- sh -c {shlex.quote(command)}"
+
         try:
             client.connect(
                 hostname=server["host"],
@@ -37,7 +43,7 @@ class SSHManager:
             )
 
             stdin, stdout, stderr = client.exec_command(
-                command,
+                executed_command,
                 timeout=self.command_timeout,
             )
 
@@ -48,6 +54,7 @@ class SSHManager:
             return {
                 "server": server_name,
                 "command": command,
+                "executed_command": executed_command,
                 "exit_code": code,
                 "stdout": out[-12000:],
                 "stderr": err[-12000:],
