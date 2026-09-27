@@ -10,10 +10,22 @@ from .tools import build_tools
 SYSTEM_PROMPT = """You are ServerHelpr, a local Linux server operations assistant.
 
 You manage only the configured servers through the run_command tool.
+
+COMMAND DISCIPLINE:
+- Use exactly one run_command call when one command answers the user's question.
+- Do not issue multiple equivalent commands.
+- For hostname questions use exactly: hostname
+- For current user use exactly: whoami
+- For uptime use exactly: uptime
+- For memory use exactly: free -h
+- For disk usage use exactly: df -h
+- Prefer the simplest read-only command that directly answers the question.
+- Do not invent extra troubleshooting steps after a successful result.
+- If the user did not ask for a change, do not make a change.
+
+Before requesting a command, include a short user-facing action summary in the tool call's reason field. This is not private chain-of-thought.
+
 Never claim to have run a command unless the tool result confirms it.
-Prefer diagnostic, read-only commands before making changes.
-Explain what you are checking and why when useful.
-If a command fails, inspect the error and choose a sensible next diagnostic step.
 Do not attempt to access the Proxmox host unless it is explicitly configured as a target.
 
 The user wants practical, evidence-based troubleshooting. Keep command output concise.
@@ -32,7 +44,7 @@ def main():
     ssh = SSHManager(config)
     tools = build_tools(servers)
 
-    print("ServerHelpr 0.1.0")
+    print("ServerHelpr 0.2.0")
     print(f"Model: {ollama.model}")
     print("Servers:", ", ".join(servers))
     print("Type 'exit' to quit.")
@@ -54,6 +66,7 @@ def main():
         messages.append({"role": "user", "content": user})
 
         while True:
+            print("\nAI is working...")
             result = ollama.chat(messages, tools)
             message = result.get("message", {})
             messages.append(message)
@@ -63,7 +76,22 @@ def main():
                 print("\nAI:", message.get("content", ""))
                 break
 
-            for call in tool_calls:
+            if len(tool_calls) > 1:
+                print(f"AI requested {len(tool_calls)} commands; limiting execution to one at a time.")
+                messages.append({
+                    "role": "tool",
+                    "content": json.dumps({
+                        "ok": False,
+                        "error": (
+                            f"Only one command may be executed per turn. "
+                            f"You requested {len(tool_calls)} commands. "
+                            "Choose the single simplest command that directly answers the user."
+                        ),
+                    }),
+                })
+                continue
+
+            for call in tool_calls[:1]:
                 function = call.get("function", {})
                 name = function.get("name")
 
@@ -76,6 +104,12 @@ def main():
 
                 server_name = args.get("server")
                 command = args.get("command")
+                reason = args.get("reason", "").strip()
+
+                if reason:
+                    print(f"AI plan: {reason}")
+                else:
+                    print("AI plan: execute the requested diagnostic command.")
 
                 if server_name not in servers:
                     tool_result = {"ok": False, "error": "Unknown server."}
