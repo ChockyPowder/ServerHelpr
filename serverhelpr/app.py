@@ -10,6 +10,7 @@ from rich.text import Text
 
 from .config import load_config
 from .ollama import OllamaClient
+from .knowledge import KnowledgeBase
 from .policy import Policy
 from .ssh import SSHManager
 from .tools import build_tools
@@ -161,6 +162,7 @@ def main():
     policy = Policy(config)
     ssh = SSHManager(config)
     tools = build_tools(servers)
+    knowledge = KnowledgeBase(config)
 
     _show_banner(ollama, servers)
     console.print("[dim]Type 'exit' to quit.[/dim]")
@@ -189,7 +191,20 @@ def main():
             messages = [messages[0]] + messages[-max_history_messages:]
 
         lower_user = user.lower()
+        learned = knowledge.find(user)
         expected_command = None
+        expected_server = None
+
+        if learned:
+            console.print(Panel(
+                f"Matched learned intent: {learned.get('meaning', learned.get('phrase', user))}\\n"
+                f"Command: {learned.get('command')}",
+                title="[bold green]KNOWLEDGE BASE MATCH[/bold green]",
+                border_style="green",
+            ))
+            expected_command = learned.get("command")
+            if learned.get("server") in servers:
+                expected_server = learned.get("server")
         if "hostname" in lower_user:
             expected_command = "hostname"
         elif "who am i" in lower_user or "current user" in lower_user:
@@ -236,11 +251,74 @@ def main():
                     )
                     messages.append({"role": "tool", "content": json.dumps(tool_result)})
                     continue
-                display = content or "The model returned no tool call and no text response."
+                if content:
+                    console.print(Panel(
+                        content,
+                        title=f"[bold cyan]AI RESPONSE[/bold cyan]  [dim]{elapsed:.2f}s[/dim]",
+                        border_style="cyan",
+                    ))
+                    break
+
+                try:
+                    suggestion, clarify_elapsed = _run_with_spinner(
+                        "Asking AI to clarify…",
+                        lambda: ollama.clarify(user, list(servers)),
+                    )
+                except Exception as exc:
+                    console.print(Panel(
+                        f"Could not get an AI clarification: {type(exc).__name__}: {exc}",
+                        title="[bold red]CLARIFICATION ERROR[/bold red]",
+                        border_style="red",
+                    ))
+                    break
+
+                suggestion = suggestion or "I couldn't confidently determine what you meant."
                 console.print(Panel(
-                    display,
-                    title=f"[bold cyan]AI RESPONSE[/bold cyan]  [dim]{elapsed:.2f}s[/dim]",
-                    border_style="cyan",
+                    suggestion,
+                    title=f"[bold magenta]AI SUGGESTION[/bold magenta]  [dim]{clarify_elapsed:.2f}s[/dim]",
+                    border_style="magenta",
+                ))
+
+                choice = Prompt.ask(
+                    "[bold cyan]Is that what you meant?[/bold cyan]",
+                    choices=["y", "n", "a"],
+                    default="n",
+                ).lower()
+
+                if choice == "n":
+                    console.print("[dim]Okay — please rephrase the request.[/dim]")
+                    break
+
+                fields = {}
+                for line in suggestion.splitlines():
+                    if ":" in line:
+                        key, value = line.split(":", 1)
+                        fields[key.strip().lower()] = value.strip()
+
+                meaning = fields.get("meaning", suggestion)
+                suggested_server = fields.get("server")
+                suggested_command = fields.get("command")
+
+                if suggested_server in servers and suggested_command and suggested_command.lower() != "unknown":
+                    if choice == "a":
+                        knowledge.add(user, meaning, suggested_server, suggested_command)
+                        console.print(Panel(
+                            f"Saved this interpretation for future requests.\\n\\n"
+                            f"Phrase: {user}\\nServer: {suggested_server}\\nCommand: {suggested_command}",
+                            title="[bold green]ADDED TO KNOWLEDGE BASE[/bold green]",
+                            border_style="green",
+                        ))
+                    tool_result = _run_command(
+                        ssh, servers, suggested_server, suggested_command,
+                        f"Executing on {suggested_server}…",
+                    )
+                    messages.append({"role": "tool", "content": json.dumps(tool_result)})
+                    continue
+
+                console.print(Panel(
+                    "The AI suggestion did not contain a usable server and command, so nothing was executed.",
+                    title="[bold yellow]NO EXECUTABLE INTERPRETATION[/bold yellow]",
+                    border_style="yellow",
                 ))
                 break
 
