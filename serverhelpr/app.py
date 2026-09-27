@@ -225,6 +225,7 @@ def main():
         repeated_calls = 0
         forced_tool_retry = 0
         mutation_allowed = request_allows_mutation(user)
+        successful_tool_executed = False
 
         for step in range(1, max_steps + 1):
             try:
@@ -246,7 +247,17 @@ def main():
             messages.append(message)
 
             if not calls:
-                if content and forced_tool_retry < 2:
+                # Once a tool has successfully executed, a natural-language response
+                # is a valid completion. Do not force another tool call merely because
+                # the small model did not emit a second tool call.
+                if content and successful_tool_executed:
+                    console.print(Panel(
+                        content,
+                        title=f"[bold cyan]AI RESPONSE[/bold cyan] [dim]{elapsed:.2f}s · {step} step(s)[/dim]",
+                        border_style="cyan",
+                    ))
+                    break
+                if content and forced_tool_retry < 1:
                     forced_tool_retry += 1
                     messages.append({
                         "role": "user",
@@ -356,6 +367,8 @@ def main():
                         allowed = policy.request(server, command)
                     if allowed:
                         tool_result = execute(ssh, servers, server, command, name)
+                        if tool_result.get("ok"):
+                            successful_tool_executed = True
                     else:
                         tool_result = {"ok": False, "error": "User denied execution by policy."}
                         console.print(Panel(
