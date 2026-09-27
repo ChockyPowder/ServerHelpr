@@ -130,6 +130,74 @@ def _parse_tool_arguments(function):
     return None
 
 
+def _parse_embedded_tool(content):
+    """Recover tool-call-shaped JSON emitted as ordinary text by tiny models."""
+    text = (content or "").strip()
+    if not text:
+        return None
+    candidates = [text]
+    if "<tool_call>" in text and "</tool_call>" in text:
+        inner = text.split("<tool_call>", 1)[1].split("</tool_call>", 1)[0].strip()
+        candidates.insert(0, inner)
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        name = parsed.get("name")
+        arguments = parsed.get("arguments", {})
+        if isinstance(name, str) and isinstance(arguments, dict):
+            return {"name": name, "arguments": arguments}
+    return None
+
+
+def _infer_server(user_text, servers):
+    lower = user_text.lower()
+    if len(servers) == 1:
+        return next(iter(servers))
+    for name in servers:
+        if name.lower() in lower:
+            return name
+    return None
+
+
+def _deterministic_command(user_text):
+    lower = user_text.lower()
+    if "hostname" in lower:
+        return "hostname"
+    if "who am i" in lower or "current user" in lower:
+        return "whoami"
+    if "uptime" in lower:
+        return "uptime"
+    if "memory" in lower or "ram" in lower:
+        return "free -h"
+    if "disk usage" in lower or "disk space" in lower:
+        return "df -h"
+    if ("local ip" in lower or "local ip address" in lower
+            or "local address" in lower or "ip address" in lower):
+        return "hostname -I"
+    return None
+
+
+def _show_direct_answer(result):
+    if result.get("ok"):
+        output = result.get("stdout", "").strip()
+        console.print(Panel(
+            output or "Command completed successfully.",
+            title="[bold cyan]AI RESPONSE[/bold cyan]",
+            border_style="cyan",
+        ))
+    else:
+        error = result.get("stderr") or result.get("error") or "Command failed."
+        console.print(Panel(
+            error.strip(),
+            title="[bold red]AI RESPONSE[/bold red]",
+            border_style="red",
+        ))
+
+
 def _run_command(ssh, servers, server_name, command, label):
     """Execute one already-validated command and render its result."""
     _show_tool_request(server_name, command)
@@ -205,37 +273,30 @@ def main():
             expected_command = learned.get("command")
             if learned.get("server") in servers:
                 expected_server = learned.get("server")
-        if "hostname" in lower_user:
-            expected_command = "hostname"
-        elif "who am i" in lower_user or "current user" in lower_user:
-            expected_command = "whoami"
-        elif "uptime" in lower_user:
-            expected_command = "uptime"
-        elif "memory" in lower_user or "ram" in lower_user:
-            expected_command = "free -h"
-        elif "disk usage" in lower_user or "disk space" in lower_user:
-            expected_command = "df -h"
-        elif ("local ip" in lower_user or "local ip address" in lower_user
-              or "local address" in lower_user or "ip address" in lower_user):
-            expected_command = "hostname -I"
 
-        if learned and expected_server and expected_command:
-            if policy.is_allowed(expected_server, expected_command) or policy.request(
+        if not expected_command:
+            expected_command = _deterministic_command(user)
+        if expected_command and not expected_server:
+            expected_server = _infer_server(user, servers)
+
+        # Known/learned operations execute once without an LLM round-trip.
+        if expected_command and expected_server:
+            if not (policy.is_allowed(expected_server, expected_command) or policy.request(
                 expected_server, expected_command
-            ):
-                tool_result = _run_command(
-                    ssh, servers, expected_server, expected_command,
-                    f"Executing on {expected_server}…",
-                )
-                messages.append({"role": "tool", "content": json.dumps(tool_result)})
-                # Let the model turn the real command result into the final answer.
-            else:
+            )):
                 console.print(Panel(
                     "Command denied by user.",
                     title="[bold yellow]COMMAND DENIED[/bold yellow]",
                     border_style="yellow",
                 ))
                 continue
+
+            tool_result = _run_command(
+                ssh, servers, expected_server, expected_command,
+                f"Executing on {expected_server}…",
+            )
+            _show_direct_answer(tool_result)
+            continue
 
         while True:
             result, elapsed = _run_with_spinner(
@@ -246,29 +307,112 @@ def main():
             messages.append(message)
 
             tool_calls = message.get("tool_calls") or []
-            if not tool_calls:
-                content = (message.get("content") or "").strip()
-                fallback_server = None
-                if expected_command:
-                    if len(servers) == 1:
-                        fallback_server = next(iter(servers))
-                    else:
-                        for name in servers:
-                            if name.lower() in lower_user:
-                                fallback_server = name
-                                break
-                if expected_command and fallback_server:
+            content = (message.get("content") or "").strip()
+
+            # Tiny models can emit tool-call JSON as ordinary text.
+            embedded = _parse_embedded_tool(content)
+            if not tool_calls and embedded:
+                embedded_name = embedded["name"]
+                embedded_args = embedded["arguments"]
+                if embedded_name == "run_command":
+                    tool_calls = [{"function": {
+                        "name": embedded_name,
+                        "arguments": embedded_args,
+                    }}]
+                else:
+                    known = {
+                        "hostname": "hostname",
+                        "whoami": "whoami",
+                        "uptime": "uptime",
+                        "free -h": "free -h",
+                        "df -h": "df -h",
+                        "hostname -I": "hostname -I",
+                    }
+                    suggested_command = known.get(embedded_name)
+                    suggested_server = embedded_args.get("server")
+                    if suggested_server not in servers:
+                        suggested_server = _infer_server(user, servers)
+
+                    suggestion = (
+                        "The AI thinks you may be referring to a tool/capability "
+                        "that ServerHelpr does not currently have.\n\n"
+                        f"Possible tool: {embedded_name}\n"
+                        f"Server: {suggested_server or 'unknown'}"
+                    )
+                    if suggested_command:
+                        suggestion += f"\nCommand I would use: {suggested_command}"
+
                     console.print(Panel(
-                        "Model returned no tool call; using the deterministic command: " + expected_command,
-                        title="[bold yellow]MODEL FALLBACK[/bold yellow]",
+                        suggestion,
+                        title=f"[bold magenta]AI TOOL SUGGESTION[/bold magenta]  [dim]{elapsed:.2f}s[/dim]",
+                        border_style="magenta",
+                    ))
+                    choice = Prompt.ask(
+                        "[bold cyan]y=yes, n=no, d=more details, a=accept + remember[/bold cyan]",
+                        choices=["y", "n", "d", "a"],
+                        default="n",
+                    ).lower()
+
+                    if choice == "d":
+                        try:
+                            details, details_elapsed = _run_with_spinner(
+                                "Asking AI for more details…",
+                                lambda: ollama.clarify(user, list(servers)),
+                            )
+                            console.print(Panel(
+                                details or "The AI could not provide more detail.",
+                                title=f"[bold magenta]AI DETAILS[/bold magenta]  [dim]{details_elapsed:.2f}s[/dim]",
+                                border_style="magenta",
+                            ))
+                        except Exception as exc:
+                            console.print(Panel(
+                                f"Could not get more details: {type(exc).__name__}: {exc}",
+                                title="[bold red]CLARIFICATION ERROR[/bold red]",
+                                border_style="red",
+                            ))
+                        break
+
+                    if choice == "n":
+                        console.print("[dim]Okay — please rephrase the request.[/dim]")
+                        break
+
+                    if suggested_server in servers and suggested_command:
+                        if choice == "a":
+                            knowledge.add(
+                                user,
+                                f"Use {suggested_command} on {suggested_server}.",
+                                suggested_server,
+                                suggested_command,
+                            )
+                            console.print(Panel(
+                                "Saved this interpretation for future requests.",
+                                title="[bold green]ADDED TO KNOWLEDGE BASE[/bold green]",
+                                border_style="green",
+                            ))
+                        if policy.is_allowed(suggested_server, suggested_command) or policy.request(
+                            suggested_server, suggested_command
+                        ):
+                            tool_result = _run_command(
+                                ssh, servers, suggested_server, suggested_command,
+                                f"Executing on {suggested_server}…",
+                            )
+                            _show_direct_answer(tool_result)
+                        else:
+                            console.print(Panel(
+                                "Command denied by user.",
+                                title="[bold yellow]COMMAND DENIED[/bold yellow]",
+                                border_style="yellow",
+                            ))
+                        break
+
+                    console.print(Panel(
+                        "That tool is not implemented yet, so nothing was executed.",
+                        title="[bold yellow]TOOL NOT AVAILABLE[/bold yellow]",
                         border_style="yellow",
                     ))
-                    tool_result = _run_command(
-                        ssh, servers, fallback_server, expected_command,
-                        "Executing on " + fallback_server + "…",
-                    )
-                    messages.append({"role": "tool", "content": json.dumps(tool_result)})
-                    continue
+                    break
+
+            if not tool_calls:
                 if content:
                     console.print(Panel(
                         content,
@@ -296,12 +440,30 @@ def main():
                     title=f"[bold magenta]AI SUGGESTION[/bold magenta]  [dim]{clarify_elapsed:.2f}s[/dim]",
                     border_style="magenta",
                 ))
-
                 choice = Prompt.ask(
-                    "[bold cyan]Is that what you meant?[/bold cyan]",
-                    choices=["y", "n", "a"],
+                    "[bold cyan]y=yes, n=no, d=more details, a=accept + remember[/bold cyan]",
+                    choices=["y", "n", "d", "a"],
                     default="n",
                 ).lower()
+
+                if choice == "d":
+                    try:
+                        details, details_elapsed = _run_with_spinner(
+                            "Asking AI for more details…",
+                            lambda: ollama.clarify(user, list(servers)),
+                        )
+                        console.print(Panel(
+                            details or "The AI could not provide more detail.",
+                            title=f"[bold magenta]AI DETAILS[/bold magenta]  [dim]{details_elapsed:.2f}s[/dim]",
+                            border_style="magenta",
+                        ))
+                    except Exception as exc:
+                        console.print(Panel(
+                            f"Could not get more details: {type(exc).__name__}: {exc}",
+                            title="[bold red]CLARIFICATION ERROR[/bold red]",
+                            border_style="red",
+                        ))
+                    break
 
                 if choice == "n":
                     console.print("[dim]Okay — please rephrase the request.[/dim]")
@@ -326,7 +488,6 @@ def main():
                             title="[bold green]ADDED TO KNOWLEDGE BASE[/bold green]",
                             border_style="green",
                         ))
-
                     if policy.is_allowed(suggested_server, suggested_command) or policy.request(
                         suggested_server, suggested_command
                     ):
@@ -334,14 +495,13 @@ def main():
                             ssh, servers, suggested_server, suggested_command,
                             f"Executing on {suggested_server}…",
                         )
-                        messages.append({"role": "tool", "content": json.dumps(tool_result)})
-                        continue
-
-                    console.print(Panel(
-                        "Command denied by user.",
-                        title="[bold yellow]COMMAND DENIED[/bold yellow]",
-                        border_style="yellow",
-                    ))
+                        _show_direct_answer(tool_result)
+                    else:
+                        console.print(Panel(
+                            "Command denied by user.",
+                            title="[bold yellow]COMMAND DENIED[/bold yellow]",
+                            border_style="yellow",
+                        ))
                     break
 
                 console.print(Panel(
@@ -454,3 +614,5 @@ def main():
                     "content": json.dumps(tool_result),
                 }
             )
+            _show_direct_answer(tool_result)
+            break
