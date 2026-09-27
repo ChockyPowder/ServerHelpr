@@ -39,8 +39,10 @@ SAFETY:
 - Only change systems when the user requested the change or it is necessary to fulfill the explicit task.
 - Never claim execution without tool evidence.
 - Unrestricted configured test servers may execute without approval.
-- Mutating tools are allowed only when the user's request explicitly asks for a change. A read-only/status question must never trigger start, stop, restart, install, update, upgrade, write, delete, or arbitrary run_command actions.
-- If the request is read-only, use only inspection/read tools until the task is answered.
+- Mutating tools require user approval before execution.
+- If a read-only question needs a mutating tool, ask the user for permission instead of blocking the task.
+- Never assume approval. The user must explicitly allow the proposed command.
+- High-risk operations are always approved explicitly and cannot be remembered.
 
 When a task needs investigation, investigate first. When a task needs modification, inspect before editing. When a task changes a service or file, verify afterwards.
 
@@ -334,20 +336,26 @@ def main():
                 ))
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
-            elif tool_is_mutating(name) and not mutation_allowed:
-                tool_result = {
-                    "ok": False,
-                    "error": (
-                        "BLOCKED: this user request is read-only. The selected tool can modify "
-                        "the server, but the request does not explicitly authorize a change. "
-                        "Choose a read-only inspection tool instead."
-                    ),
-                }
-                console.print(Panel(
-                    f"Tool: {name}\nUser request classified as read-only.",
-                    title="[bold yellow]MUTATING TOOL BLOCKED[/bold yellow]",
-                    border_style="yellow",
-                ))
+            elif tool_is_mutating(name):
+                server = args.get("server")
+                command = command_for_tool(name, args)
+                if not policy.request(server, command):
+                    tool_result = {"ok": False, "error": "User denied execution of the mutating command."}
+                elif server not in servers:
+                    tool_result = {"ok": False, "error": f"Unknown server: {server!r}"}
+                elif not command:
+                    tool_result = {"ok": False, "error": f"Unsupported tool: {name!r}"}
+                else:
+                    console.print(Panel(
+                        f"[bold]Step {step}/{max_steps}[/bold]\nTool: [cyan]{name}[/cyan]\nTarget: [cyan]{server}[/cyan]\nCommand: [cyan]{command}[/cyan]",
+                        title="[bold cyan]AI PLAN[/bold cyan]", border_style="cyan",
+                    ))
+                    if policy.is_allowed(server, command):
+                        tool_result = execute(ssh, servers, server, command, name)
+                        if tool_result.get("ok"):
+                            successful_tool_executed = True
+                    else:
+                        tool_result = {"ok": False, "error": "Execution denied by policy."}
             else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
