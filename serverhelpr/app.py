@@ -271,27 +271,29 @@ def main():
                         border_style="cyan",
                     ))
                     break
-                if content and forced_tool_retry < 2:
+                if forced_tool_retry < 3:
                     forced_tool_retry += 1
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "STOP. Your previous message described an action but did not execute it. "
-                            "The user's requested task is not complete. Call the appropriate tool NOW. "
-                            "If you need to change a file, use write_file with the complete proposed "
-                            "contents so ServerHelpr can show the user the exact edit and request approval. "
-                            "If you need another system change, call the appropriate mutation tool. "
-                            "Do not merely describe what you intend to do."
-                            if mutation_allowed and not successful_mutation_executed else
+                    if mutation_allowed and not successful_mutation_executed:
+                        watchdog_prompt = (
+                            "STOP. The user's requested change is NOT complete. "
+                            "You have investigated the target and now MUST perform the requested edit. "
+                            "Respond with a TOOL CALL ONLY, not prose. "
+                            "Call write_file for /var/www/html/index.html on interactbox and provide the "
+                            "COMPLETE HTML for a polished AI-themed homepage. ServerHelpr will show the "
+                            "exact proposed contents and ask the user for approval before writing it. "
+                            "Do not describe the edit, do not say you will do it, and do not return an empty response."
+                        )
+                    else:
+                        watchdog_prompt = (
                             "STOP. Continue the infrastructure request with exactly one appropriate tool. "
-                            "Use the real configured server and inspect actual state. "
-                            "If the user's request is read-only/status-only, select ONLY a read-only "
-                            "inspection tool. If the previous tool failed, choose another appropriate "
+                            "Respond with a TOOL CALL ONLY, not prose. Use the real configured server and "
+                            "inspect actual state. If the previous tool failed, choose another appropriate "
                             "inspection tool or correct its arguments."
-                        ),
-                    })
+                        )
+                    messages.append({"role": "user", "content": watchdog_prompt})
                     console.print(Panel(
-                        "Model produced an answer without executing a tool; requesting an actual tool action.",
+                        "Model did not execute the required next action; forcing another tool-call turn "
+                        f"({forced_tool_retry}/3).",
                         title="[bold yellow]AGENT TOOL WATCHDOG[/bold yellow]",
                         border_style="yellow",
                     ))
@@ -375,8 +377,6 @@ def main():
                         tool_result = execute(ssh, servers, server, command, name)
                         if tool_result.get("ok"):
                             successful_tool_executed = True
-                            if classification != "read_only":
-                                successful_mutation_executed = True
                     else:
                         preview = None
                         if name == "write_file":
