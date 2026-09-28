@@ -6,7 +6,7 @@ INSTALL_DIR="/opt/serverhelpr"
 MODEL="${SERVERHELPR_MODEL:-qwen3.5:4b}"
 
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "Run this installer as root."
+  echo "Make Sure Run this installer as root."
   exit 1
 fi
 
