@@ -22,8 +22,6 @@ def build_tools(servers: dict) -> list:
     server = {"type": "string", "enum": names, "description": "Configured target server."}
     path = {"type": "string", "description": "Absolute path on the target Linux server."}
     return [
-        _schema("web_search", "Search the public internet for current information. Requires user approval every time and is never remembered.", {"query": {"type": "string", "description": "Web search query."}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, ["query"]),
-        _schema("web_fetch", "Fetch a public web page for research. Requires user approval every time and is never remembered.", {"url": {"type": "string", "description": "Public http or https URL to fetch."}}, ["url"]),
         _schema("server_info", "Collect basic OS, hostname, uptime, memory and root filesystem information.", {"server": server}, ["server"]),
         _schema("network_info", "Inspect network addresses and listening sockets.", {"server": server}, ["server"]),
         _schema("process_list", "List running processes, optionally filtered by a pattern.", {"server": server, "pattern": {"type": "string"}}, ["server"]),
@@ -50,10 +48,6 @@ def _q(value):
 
 
 def command_for_tool(name: str, args: dict) -> str | None:
-    if name == "web_search":
-        return f"WEB SEARCH: {str(args.get('query', '')).strip()}"
-    if name == "web_fetch":
-        return f"WEB FETCH: {str(args.get('url', '')).strip()}"
     if name == "server_info":
         return "hostname; uname -a; uptime; free -h; df -h /"
     if name == "network_info":
