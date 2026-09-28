@@ -150,6 +150,17 @@ def execute(ssh, servers, server, command, tool_name):
         return {"ok": False, "exit_code": None, "error": error}
 
 
+def compact_tool_result(result, max_stdout=8000, max_stderr=4000):
+    if not isinstance(result, dict):
+        return result
+    value = dict(result)
+    for key, limit in (("stdout", max_stdout), ("stderr", max_stderr)):
+        text = value.get(key)
+        if isinstance(text, str) and len(text) > limit:
+            value[key] = text[:limit] + f"\n...[truncated {len(text) - limit} bytes]..."
+    return value
+
+
 def memory_call(name, args, knowledge):
     if name == "recall_knowledge":
         server = None if args.get("server") == "global" else args.get("server")
@@ -186,8 +197,8 @@ def main():
     knowledge = KnowledgeBase(config)
     tools = build_tools(servers)
     agent = config.get("agent", {})
-    max_steps = int(agent.get("max_steps", 16))
-    max_history = int(agent.get("max_history_messages", 20))
+    max_steps = int(agent.get("max_steps", 32))
+    max_history = int(agent.get("max_history_messages", 30))
 
     console.print(Panel.fit(
         Text.assemble(Text("SERVERHELPR", style="bold cyan"), "\n",
@@ -337,39 +348,6 @@ def main():
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
             else:
-                    operation = f"Fetch public web page: {str(args.get('url', '')).strip()}"
-                console.print(Panel(
-                    operation,
-                    title="[bold magenta]WEB ACCESS REQUEST[/bold magenta]",
-                    border_style="magenta",
-                ))
-                if not policy.request_web(operation):
-                    tool_result = {"ok": False, "error": "User denied internet access for this operation."}
-                    console.print(Panel(
-                        "Internet access denied.",
-                        title="[bold yellow]WEB ACCESS DENIED[/bold yellow]",
-                        border_style="yellow",
-                    ))
-                else:
-                    try:
-                        if name == "web_search":
-                            tool_result = web.search(args.get("query", ""), args.get("limit", 5))
-                        else:
-                            tool_result = web.fetch(args.get("url", ""))
-                        successful_tool_executed = bool(tool_result.get("ok"))
-                        console.print(Panel(
-                            json.dumps(tool_result, ensure_ascii=False, indent=2)[:20000],
-                            title="[bold magenta]WEB RESULT[/bold magenta]",
-                            border_style="magenta",
-                        ))
-                    except Exception as exc:
-                        tool_result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-                        console.print(Panel(
-                            tool_result["error"],
-                            title="[bold red]WEB ERROR[/bold red]",
-                            border_style="red",
-                        ))
-            else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
                 if server not in servers:
@@ -418,9 +396,11 @@ def main():
                         if tool_result.get("ok"):
                             successful_tool_executed = True
 
-            messages.append({"role": "tool", "content": json.dumps(tool_result, ensure_ascii=False)})
+            model_tool_result = compact_tool_result(tool_result)
+            messages.append({"role": "tool", "content": json.dumps(model_tool_result, ensure_ascii=False)})
             if len(messages) > max_history:
-                messages = [messages[0]] + messages[-(max_history - 1):]
+                # Always preserve the system prompt and original user request.
+                messages = [messages[0], messages[1]] + messages[-(max_history - 2):]
         else:
             console.print(Panel(
                 f"Stopped after {max_steps} agent steps. The task may be incomplete.",
