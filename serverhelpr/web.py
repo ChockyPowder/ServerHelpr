@@ -1,4 +1,4 @@
-import json
+import ipaddress
 import re
 import subprocess
 from urllib.parse import quote_plus, urlparse
@@ -19,7 +19,11 @@ class WebAccess:
         host = (parsed.hostname or "").lower()
         if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
             raise ValueError("Local/private web targets are blocked.")
-        if re.match(r"^(127\\.|10\\.|192\\.168\\.|169\\.254\\.|0\\.)", host):
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address and (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved):
             raise ValueError("Private/local IP web targets are blocked.")
         return url
 
@@ -38,7 +42,7 @@ class WebAccess:
         ):
             href = re.sub(r"<.*?>", "", match.group(1))
             title = re.sub(r"<.*?>", "", match.group(2))
-            title = re.sub(r"\\s+", " ", title).strip()
+            title = re.sub(r"\s+", " ", title).strip()
             if href.startswith("//"):
                 href = "https:" + href
             if href.startswith("http"):
