@@ -365,6 +365,26 @@ def main():
                     tool_result = {"ok": False, "error": f"Unsupported tool: {name!r}"}
                 else:
                     classification = policy.classify(command, name)
+
+                    # Some models use run_command for simple inspection commands.
+                    # Recognize the common read-only forms here so an observational
+                    # command does not consume the mutation-completed state.
+                    if name == "run_command":
+                        import re
+                        observational = re.match(
+                            r"^\s*(?:sudo\s+(?:-n\s+)?)?(?:cat|head|tail|grep|egrep|fgrep|find|ls|stat|file|pwd|"
+                            r"whoami|hostname|uname|uptime|free|df|du|ps|pgrep|pidof|ss|ip|systemctl|journalctl|"
+                            r"dpkg|apt-cache|which|whereis|id|getent|mount|lsblk|lscpu|lsmem|env|printenv)\b",
+                            command,
+                        )
+                        mutation_markers = re.search(
+                            r"\b(?:rm|mv|cp|mkdir|touch|chmod|chown|install|remove|purge|upgrade|update|"
+                            r"restart|reboot|shutdown|start|stop|enable|disable)\b|>>?|\|\s*(?:sh|bash|dash)\b",
+                            command,
+                        )
+                        if observational and not mutation_markers:
+                            classification = "read_only"
+
                     console.print(Panel(
                         f"[bold]Step {step}/{max_steps}[/bold]\\n"
                         f"Tool: [cyan]{name}[/cyan]\\nTarget: [cyan]{server}[/cyan]\\n"
