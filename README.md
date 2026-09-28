@@ -73,6 +73,7 @@ The model can currently use:
 - file searching
 - arbitrary shell commands
 - persistent memory recall/storage
+- public web search and page fetching (each operation requires approval)
 
 The tool layer is intentionally extensible.
 
@@ -93,7 +94,9 @@ It is not limited to one command per request.
 - Every server command passes through the policy/approval layer.
 - Restricted servers require approval for commands not already allowed.
 - High-risk command patterns require interactive approval and cannot be permanently remembered.
-- A server configured with `unrestricted: true` is treated as a disposable test sandbox and bypasses approval.
+- A server configured with `unrestricted: true` only controls SSH execution privileges; changes still require approval.
+- Internet access is separate from server access. Every web search/page fetch requires interactive approval and web approval is never remembered.
+- The model is not allowed to use `run_command` as an internet-access bypass; web research goes through the dedicated web tools.
 - Failed commands are returned as evidence; the agent is instructed not to invent causes or perform unrelated cleanup.
 
 ## Requirements
