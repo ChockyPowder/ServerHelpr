@@ -239,6 +239,7 @@ def main():
         forced_tool_retry = 0
         mutation_allowed = request_allows_mutation(user)
         successful_tool_executed = False
+        successful_mutation_executed = False
 
         for step in range(1, max_steps + 1):
             try:
@@ -260,27 +261,33 @@ def main():
             messages.append(message)
 
             if not calls:
-                # Once a tool has successfully executed, a natural-language response
-                # is a valid completion. Do not force another tool call merely because
-                # the small model did not emit a second tool call.
-                if content and successful_tool_executed:
+                # A read-only task may finish after successful inspection. A requested
+                # mutation may NOT finish merely because the model narrated the next step.
+                # It must actually issue the mutation tool call first.
+                if content and (not mutation_allowed or successful_mutation_executed):
                     console.print(Panel(
                         content,
                         title=f"[bold cyan]AI RESPONSE[/bold cyan] [dim]{elapsed:.2f}s · {step} step(s)[/dim]",
                         border_style="cyan",
                     ))
                     break
-                if content and forced_tool_retry < 1:
+                if content and forced_tool_retry < 2:
                     forced_tool_retry += 1
                     messages.append({
                         "role": "user",
                         "content": (
+                            "STOP. Your previous message described an action but did not execute it. "
+                            "The user's requested task is not complete. Call the appropriate tool NOW. "
+                            "If you need to change a file, use write_file with the complete proposed "
+                            "contents so ServerHelpr can show the user the exact edit and request approval. "
+                            "If you need another system change, call the appropriate mutation tool. "
+                            "Do not merely describe what you intend to do."
+                            if mutation_allowed and not successful_mutation_executed else
                             "STOP. Continue the infrastructure request with exactly one appropriate tool. "
                             "Use the real configured server and inspect actual state. "
                             "If the user's request is read-only/status-only, select ONLY a read-only "
-                            "inspection tool; do not start, stop, restart, install, update, upgrade, "
-                            "write, delete, or run an arbitrary command. If the previous tool failed, "
-                            "choose another appropriate inspection tool or correct its arguments."
+                            "inspection tool. If the previous tool failed, choose another appropriate "
+                            "inspection tool or correct its arguments."
                         ),
                     })
                     console.print(Panel(
@@ -368,6 +375,8 @@ def main():
                         tool_result = execute(ssh, servers, server, command, name)
                         if tool_result.get("ok"):
                             successful_tool_executed = True
+                            if classification != "read_only":
+                                successful_mutation_executed = True
                     else:
                         preview = None
                         if name == "write_file":
@@ -395,6 +404,8 @@ def main():
                             ))
                         if tool_result.get("ok"):
                             successful_tool_executed = True
+                            if classification != "read_only":
+                                successful_mutation_executed = True
 
             model_tool_result = compact_tool_result(tool_result)
             messages.append({"role": "tool", "content": json.dumps(model_tool_result, ensure_ascii=False)})
