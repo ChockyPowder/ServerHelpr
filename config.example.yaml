@@ -11,10 +11,6 @@ agent:
   max_steps: 16
   max_history_messages: 20
 
-# Public internet research. Every search/fetch requires interactive approval.
-web:
-  timeout: 15
-  max_bytes: 200000
 
 ssh:
   connect_timeout: 10
