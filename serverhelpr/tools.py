@@ -50,6 +50,10 @@ def _q(value):
 
 
 def command_for_tool(name: str, args: dict) -> str | None:
+    if name == "web_search":
+        return f"WEB SEARCH: {str(args.get('query', '')).strip()}"
+    if name == "web_fetch":
+        return f"WEB FETCH: {str(args.get('url', '')).strip()}"
     if name == "server_info":
         return "hostname; uname -a; uptime; free -h; df -h /"
     if name == "network_info":
