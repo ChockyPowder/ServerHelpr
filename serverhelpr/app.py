@@ -14,6 +14,7 @@ from .ollama import OllamaClient
 from .policy import Policy
 from .ssh import SSHManager
 from .tools import build_tools, command_for_tool
+from .web import WebAccess
 
 
 SYSTEM_PROMPT = """You are ServerHelpr, a local-first AI infrastructure agent.
@@ -43,6 +44,8 @@ SAFETY:
 - If a read-only question needs a mutating tool, ask the user for permission instead of blocking the task.
 - Never assume approval. The user must explicitly allow the proposed command.
 - High-risk operations are always approved explicitly and cannot be remembered.
+- Internet access is a separate capability. Every web search or page fetch requires explicit user approval and web access is never remembered.
+- Never use run_command to access the internet. Use web_search or web_fetch so the approval gate cannot be bypassed.
 
 When a task needs investigation, investigate first. When a task needs modification, inspect before editing. When a task changes a service or file, verify afterwards.
 
@@ -183,6 +186,7 @@ def main():
     ollama = OllamaClient(config)
     policy = Policy(config)
     ssh = SSHManager(config)
+    web = WebAccess(config)
     knowledge = KnowledgeBase(config)
     tools = build_tools(servers)
     agent = config.get("agent", {})
@@ -336,6 +340,42 @@ def main():
                 ))
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
+            elif name in {"web_search", "web_fetch"}:
+                if name == "web_search":
+                    operation = f"Search the public internet for: {str(args.get('query', '')).strip()}"
+                else:
+                    operation = f"Fetch public web page: {str(args.get('url', '')).strip()}"
+                console.print(Panel(
+                    operation,
+                    title="[bold magenta]WEB ACCESS REQUEST[/bold magenta]",
+                    border_style="magenta",
+                ))
+                if not policy.request_web(operation):
+                    tool_result = {"ok": False, "error": "User denied internet access for this operation."}
+                    console.print(Panel(
+                        "Internet access denied.",
+                        title="[bold yellow]WEB ACCESS DENIED[/bold yellow]",
+                        border_style="yellow",
+                    ))
+                else:
+                    try:
+                        if name == "web_search":
+                            tool_result = web.search(args.get("query", ""), args.get("limit", 5))
+                        else:
+                            tool_result = web.fetch(args.get("url", ""))
+                        successful_tool_executed = bool(tool_result.get("ok"))
+                        console.print(Panel(
+                            json.dumps(tool_result, ensure_ascii=False, indent=2)[:20000],
+                            title="[bold magenta]WEB RESULT[/bold magenta]",
+                            border_style="magenta",
+                        ))
+                    except Exception as exc:
+                        tool_result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                        console.print(Panel(
+                            tool_result["error"],
+                            title="[bold red]WEB ERROR[/bold red]",
+                            border_style="red",
+                        ))
             else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
