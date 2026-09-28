@@ -13,7 +13,7 @@ from .knowledge import KnowledgeBase
 from .ollama import OllamaClient
 from .policy import Policy
 from .ssh import SSHManager
-from .tools import build_tools, command_for_tool, tool_is_mutating
+from .tools import build_tools, command_for_tool
 
 
 SYSTEM_PROMPT = """You are ServerHelpr, a local-first AI infrastructure agent.
@@ -336,28 +336,6 @@ def main():
                 ))
             elif name in {"remember_knowledge", "recall_knowledge"}:
                 tool_result = memory_call(name, args, knowledge)
-            elif tool_is_mutating(name):
-                server = args.get("server")
-                command = command_for_tool(name, args)
-                if server not in servers:
-                    tool_result = {"ok": False, "error": f"Unknown server: {server!r}"}
-                elif not command:
-                    tool_result = {"ok": False, "error": f"Unsupported tool: {name!r}"}
-                elif policy.is_remembered(server, command):
-                    console.print(Panel(
-                        f"[bold]Remembered approval[/bold]\nTool: [cyan]{name}[/cyan]\nTarget: [cyan]{server}[/cyan]\nCommand: [cyan]{command}[/cyan]",
-                        title="[bold green]APPROVED POLICY[/bold green]", border_style="green",
-                    ))
-                    tool_result = execute(ssh, servers, server, command, name)
-                    if tool_result.get("ok"):
-                        successful_tool_executed = True
-                else:
-                    if policy.request(server, command):
-                        tool_result = execute(ssh, servers, server, command, name)
-                        if tool_result.get("ok"):
-                            successful_tool_executed = True
-                    else:
-                        tool_result = {"ok": False, "error": "User denied execution of the mutating command."}
             else:
                 server = args.get("server")
                 command = command_for_tool(name, args)
@@ -366,25 +344,46 @@ def main():
                 elif not command:
                     tool_result = {"ok": False, "error": f"Unsupported tool: {name!r}"}
                 else:
+                    classification = policy.classify(command, name)
                     console.print(Panel(
-                        f"[bold]Step {step}/{max_steps}[/bold]\n"
-                        f"Tool: [cyan]{name}[/cyan]\nTarget: [cyan]{server}[/cyan]\n"
+                        f"[bold]Step {step}/{max_steps}[/bold]\\n"
+                        f"Tool: [cyan]{name}[/cyan]\\nTarget: [cyan]{server}[/cyan]\\n"
+                        f"Operation: [cyan]{classification}[/cyan]\\n"
                         f"Command: [cyan]{command}[/cyan]",
                         title="[bold cyan]AI PLAN[/bold cyan]", border_style="cyan",
                     ))
-                    allowed = policy.is_allowed(server, command)
-                    if not allowed:
-                        allowed = policy.request(server, command)
-                    if allowed:
+
+                    if classification == "read_only":
                         tool_result = execute(ssh, servers, server, command, name)
                         if tool_result.get("ok"):
                             successful_tool_executed = True
                     else:
-                        tool_result = {"ok": False, "error": "User denied execution by policy."}
-                        console.print(Panel(
-                            "Execution denied.",
-                            title="[bold yellow]COMMAND DENIED[/bold yellow]", border_style="yellow",
-                        ))
+                        preview = None
+                        if name == "write_file":
+                            content_preview = str(args.get("content", ""))
+                            preview = (
+                                f"File: {args.get('path', '')}\\n"
+                                f"Proposed new contents ({len(content_preview)} bytes):\\n"
+                                f"{content_preview}"
+                            )
+
+                        if policy.is_remembered(server, command, name):
+                            console.print(Panel(
+                                f"[bold]Remembered approval[/bold]\\nTool: [cyan]{name}[/cyan]\\n"
+                                f"Target: [cyan]{server}[/cyan]\\nCommand: [cyan]{command}[/cyan]",
+                                title="[bold green]APPROVED POLICY[/bold green]", border_style="green",
+                            ))
+                            tool_result = execute(ssh, servers, server, command, name)
+                        elif policy.request(server, command, name, preview):
+                            tool_result = execute(ssh, servers, server, command, name)
+                        else:
+                            tool_result = {"ok": False, "error": "User denied the proposed change."}
+                            console.print(Panel(
+                                "Execution denied.",
+                                title="[bold yellow]CHANGE DENIED[/bold yellow]", border_style="yellow",
+                            ))
+                        if tool_result.get("ok"):
+                            successful_tool_executed = True
 
             messages.append({"role": "tool", "content": json.dumps(tool_result, ensure_ascii=False)})
             if len(messages) > max_history:
