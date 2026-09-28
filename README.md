@@ -73,7 +73,6 @@ The model can currently use:
 - file searching
 - arbitrary shell commands
 - persistent memory recall/storage
-- public web search and page fetching (each operation requires approval)
 
 The tool layer is intentionally extensible.
 
