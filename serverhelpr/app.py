@@ -146,7 +146,7 @@ def execute(ssh, servers, server, command, tool_name):
         return result
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
-        console.print(Panel(error, title="[bold red]EXECUTION ERROR[/bold red]", border_style="red"))
+        console.print(Panel(error, title="[bold red]THERE WAS EXECUTION ERROR[/bold red]", border_style="red"))
         return {"ok": False, "exit_code": None, "error": error}
 
 
