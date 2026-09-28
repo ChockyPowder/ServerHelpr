@@ -114,23 +114,6 @@ class Policy:
             return False
         return command in set(self.approved.get(server, []))
 
-    def request_web(self, operation: str) -> bool:
-        print()
-        print("=" * 72)
-        print("INTERNET ACCESS REQUEST")
-        print("-" * 72)
-        print(operation)
-        print("-" * 72)
-        print("Y = allow this web operation once")
-        print("N = deny")
-        print("NOTE: Internet access is never remembered.")
-        while True:
-            answer = input("Choice [Y/N]: ").strip().lower()
-            if answer == "y":
-                return True
-            if answer == "n":
-                return False
-
     def request(self, server: str, command: str, tool_name: str | None = None, preview: str | None = None) -> bool:
         classification = self.classify(command, tool_name)
 
