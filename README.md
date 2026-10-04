@@ -119,3 +119,17 @@ python3 -m serverhelpr
 ## Model
 
 The model is configurable in `config.yaml`. Small models can emit tool calls as ordinary JSON text, so ServerHelpr includes recovery for that format. Stronger tool-calling models are recommended for complex multi-step tasks.
+
+
+## ServerHelpr Web
+
+The `ServerHelpr-Web` branch adds a browser-based terminal/chat interface on top of the existing local Ollama, SSH, policy, tools, and memory layers.
+
+Install the web dependency and run it from the repository root:
+
+```bash
+pip install -r requirements-web.txt
+python run_web.py
+```
+
+Then open `http://localhost:8080`. The interface intentionally keeps the CLI-style feel: compact monospace panels, command/result blocks, animated thinking/execution states, and an explicit approval modal for mutating operations. The original CLI remains unchanged.
